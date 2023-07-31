@@ -1,0 +1,651 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<title>Farm</title>
+</head>
+<body>
+
+	<input onchange="changeTimeSpeed(this)" type="number" id="timeSpeedInput" name="">
+
+	<div id="overlay"> </div>
+
+</body>
+</html>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.7.0/p5.min.js" integrity="sha512-bcfltY+lNLlNxz38yBBm/HLaUB1gTV6I0e+fahbF9pS6roIdzUytozWdnFV8ZnM6cSAG5EbmO0ag0a/fLZSG4Q==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+<script>
+
+let blocksAcross = 0
+let blockWidth = 25
+let blocks = []
+let canvasHeight = 200
+let atmosphereHeight = 50
+let time = 0
+let maxTime = 24
+let timeStepWidth
+let timeAdvance = maxTime / (60*60*4) 
+let isDay = true
+let clouds = []
+let maxClouds = 12
+let maxCloudWidth = 3 * blockWidth
+let maxCloudSpeed = 0.2
+let minCloudSpeed = 0.01
+let cloudRadius = 3
+let cloudSpawnThreshold = 0.999
+let cloudColorMod = 80
+let rainStartThreshold = 0.999
+let rainEndThreshold = 0.999
+let maxRainDropped = 2
+let gravityVY = 1.1
+let airResistance = 0.9
+let rainCloudDarkness = 255-(2*cloudColorMod/3)
+let atmosphereLines = []
+
+let stars = []
+let maxStars = 50
+let starBrightnessMod = 100
+
+let rain = []
+let rainColor
+let rainInitVY = 0.2
+let walkingSpeed = 0.67
+
+class Block {
+	constructor(x, y, width, height, img){
+		this.x = x
+		this.y = y
+		this.width = width
+		this.height = height
+		this.img = img
+	}
+}
+
+class Cloud {
+	constructor( x, y, vx, width, height, color, raining){
+		this.x = x
+		this.y = y
+		this.vx = vx
+		this.width = width
+		this.height = height
+		this.color = color
+		this.raining = raining
+		this.rain = []
+	}
+}
+
+class Rain {
+	constructor( x, y, vx, vy){
+		this.x = x
+		this.y = y
+		this.vx = vx
+		this.vy = vy
+	}
+}
+
+class Star {
+	constructor(x ,y, color){
+		this.x = x
+		this.y = y
+		this.color = color
+	}
+}
+
+class AtmosphereLine {
+	constructor(y, color){
+		this.y = y
+	}
+}
+
+class Farmer {
+  constructor(x, y, vx, width, height, direction, isVisible, action, targetX, name) {
+    this.x = x
+    this.y = y
+    this.width = width
+    this.height = height
+    this.vx = vx
+    this.direction = direction
+    this.isVisible = isVisible
+    this.action = action
+    this.targetX = targetX
+    this.name = name
+    this.pauseFrames = 0
+    this.imageFrameCount = 0
+    this.imagePhasePeriod = 15
+  }
+  imagePhaser(){
+  	this.imageFrameCount++
+  	if(this.imageFrameCount == this.imagePhasePeriod){
+  		this.action.imagePhase++
+  		if(this.action.imagePhase == this.action.actionImages.imgsDict[this.direction].length)
+  			this.action.imagePhase = 0
+  		this.imageFrameCount = 0
+  	}
+  }
+  act(){
+  	if(this.action.name == 'lookForTaskAction'){
+  		this.lookForTaskAction()
+  	}else if(this.action.name == 'walking'){
+  		this.walk()
+  	}
+  }
+  lookForTaskAction(){
+  	if(this.action.phase == 0){ // search for available tasks
+  		let foundTask = false
+  		if(!foundTask){
+  			this.action = new Action('walking', walkingActionImgs) // walk somewhere
+  		}
+  	}
+  }
+  walk(){
+  	if(this.action.phase == 0){ // pick somewhere to walk
+  		this.targetX = Math.random() * windowWidth
+  		this.isVisible = true
+  		this.imagePhaser()
+  		if(this.x > this.targetX){
+  			this.direction = 'left'
+			this.vx = -1 * walkingSpeed
+		}else{
+			this.direction = 'right'
+			this.vx = walkingSpeed
+		}
+  		this.action.phase = 1
+  	}else if(this.action.phase == 1){ // move
+  		this.imagePhaser()
+  		let farmerMiddle = this.x + (this.width/2)
+  		if(Math.abs(farmerMiddle - this.targetX) < (this.width/2)){ //reached target
+  			this.action.phase = 2
+  			this.pauseFrames = 180
+  			this.vx = 0
+  		}else{
+			this.x += this.vx
+  		}
+  	}else if(this.action.phase == 2){ // pause
+  		this.pauseFrames--
+  		if(this.pauseFrames == 0){ //change direction
+  			this.action.phase = 3
+  			if(this.direction == 'left'){
+  				this.direction = 'right'
+  				this.vx = walkingSpeed
+  			}
+  			else{
+  				this.direction = 'left'
+  				this.vx = -1*walkingSpeed
+  			}
+  			this.targetX = houseX + ( (houseWidthBlocks * blockWidth) / 2 )
+  		}
+  	}else if(this.action.phase == 3){ // return home
+  		this.imagePhaser()
+		let farmerMiddle = this.x + (this.width/2)
+  		if(Math.abs(farmerMiddle - this.targetX) < (this.width/2)){ //reached target
+  			this.action.phase = 4
+  			this.pauseFrames = 60
+  			this.vx = 0
+  		}else{
+			this.x += this.vx
+  		}
+  	}else if(this.action.phase == 4){ // enter home
+  		this.pauseFrames--
+  		if(this.pauseFrames == 0){
+  			this.isVisible = false
+  			this.pauseFrames = 180
+  			this.action.phase = 5
+  		}
+  	}else if(this.action.phase == 5){ // cooldown
+  		this.pauseFrames--
+  		if(this.pauseFrames == 0){
+  			this.action = new Action('lookForTaskAction', walkingActionImgs)
+  		}
+  	}
+  }
+}
+
+class Action {
+	constructor(name, actionImages){
+		this.name = name
+		this.actionImages = actionImages
+		this.phase = 0
+		this.imagePhase = 0
+	}
+}
+
+class ActionImages {
+	constructor(name, imgsDict){
+		this.name = name 
+		this.imgsDict = imgsDict // dict {'left':[img, img, ...], ...}
+	}
+}
+
+let dirtBlockUrls = [
+	'https://i.ibb.co/ZMSJt35/dirt-a.png',
+	'https://i.ibb.co/whL4ptD/dirt-b.png',
+	'https://i.ibb.co/3rp393H/dirt-c.png',
+	'https://i.ibb.co/6DJQX3p/dirt-d.png'
+]
+
+let houseUrl = 'https://i.ibb.co/j5Stm6Q/house-b.png'
+let houseImg
+let houseWidthBlocks = 3.5
+let houseX
+let houseY
+
+let wellUrl = 'https://i.ibb.co/RTGMbth/well-a.png'
+let wellImg
+let wellWidthBlocks = 1.25
+let wellX
+let wellY
+
+let sunWidth = blockWidth
+let sunColor
+let sunFunctionPow = 2
+let sunFunctionCoef
+
+let moonWidth = sunWidth/2
+let moonColor
+let moonCraterColor
+
+let skyColor
+
+let dirtBlockImgs = []
+
+let treeUrls = [
+	'https://i.ibb.co/fXzM0xc/tree-a.png',
+	'https://i.ibb.co/Fx04PJv/tree-b.png'
+]
+let treeImg
+let treeX
+let treeY
+let treeWidthBlocks = 3
+let treeHeightBlocks = 4
+
+let farmer
+let farmerHeightBlocks = 1
+
+let walking_a_url = 'https://i.ibb.co/6BjcqNh/walking-a.png'
+let walking_a_img
+
+let walking_b_url = 'https://i.ibb.co/rdBzZtk/walking-b.png'
+let walking_b_img
+
+let walking_c_url = 'https://i.ibb.co/4js4nwq/walking-c.png'
+let walking_c_img
+
+let walkingActionImgs
+
+function randomDirt(){
+	return dirtBlockImgs[Math.floor(Math.random() * dirtBlockImgs.length)]
+}
+
+function preload() {
+	for(const dirtBlockUrl of dirtBlockUrls){
+		dirtBlockImgs.push(loadImage(dirtBlockUrl))
+	}
+	houseImg = loadImage(houseUrl)
+	wellImg = loadImage(wellUrl)
+	treeImg = loadImage(treeUrls[Math.floor( Math.random() * treeUrls.length )])
+
+	// farmer images
+	walking_a_img = loadImage(walking_a_url)
+	walking_b_img = loadImage(walking_b_url)
+	walking_c_img = loadImage(walking_c_url)
+	let walkingActionImgsDict = {}
+	walkingActionImgsDict['left'] = [walking_a_img,walking_c_img]
+	walkingActionImgsDict['right'] = [walking_a_img, walking_c_img]
+	walkingActionImgs = new ActionImages('walking', walkingActionImgsDict)
+
+
+}
+	
+function setup() {
+	// setup canvas
+	createCanvas(windowWidth, canvasHeight);
+	document.getElementById('defaultCanvas0').style.position = 'fixed'
+	document.getElementById('defaultCanvas0').style.bottom = 0
+	let overlay = document.getElementById('overlay')
+	overlay.style.zIndex = '2';
+	overlay.style.position = 'fixed'
+	overlay.style.bottom = '0'
+	overlay.style.height = canvasHeight - atmosphereHeight + 'px'
+	overlay.style.width = '100vw'
+
+	// setup dirt
+	blocksAcross = windowWidth/blockWidth
+	for(let i = 0; i < blocksAcross; i++){
+		blocks.push(new Block((i * blockWidth), canvasHeight-blockWidth, blockWidth, blockWidth, randomDirt()))
+	}
+
+	// setup house
+	houseX = Math.floor(Math.random() * 3 * (windowWidth/4)) + (windowWidth/8) - (houseWidthBlocks * blockWidth / 2) // within middle 3/4 of screen
+	houseY = canvasHeight - blockWidth - (houseWidthBlocks * blockWidth)
+
+	// setup well
+	wellX = Math.floor(Math.random() * 3 * (windowWidth/4)) + (windowWidth/8) // within middle 3/4 of screen
+	let minGap = blockWidth
+	// ...dont collid with house
+	while( Math.abs( (houseX + (houseWidthBlocks*blockWidth/2)) - (wellX + (wellWidthBlocks*blockWidth/2))) < (houseWidthBlocks*blockWidth/2) + minGap ){
+		wellX = Math.floor(Math.random() * 3 * (windowWidth/4)) + (windowWidth/8)
+	}
+	wellY =  canvasHeight - blockWidth - (wellWidthBlocks * blockWidth)
+
+	// tree
+	treeX = Math.floor(Math.random() * 3 * (windowWidth/4)) + (windowWidth/8) // within middle 3/4 of screen
+	while( Math.abs( (houseX + (houseWidthBlocks*blockWidth/2)) - (treeX + (treeWidthBlocks*blockWidth/2))) < (houseWidthBlocks*blockWidth/2) + minGap ){
+		treeX = Math.floor(Math.random() * 3 * (windowWidth/4)) + (windowWidth/8)
+	}
+	while( Math.abs( (wellX + (wellWidthBlocks*blockWidth/2)) - (treeX + (treeWidthBlocks*blockWidth/2))) < (wellWidthBlocks*blockWidth/2) + minGap ){
+		treeX = Math.floor(Math.random() * 3 * (windowWidth/4)) + (windowWidth/8)
+	}
+	treeY = canvasHeight - blockWidth - (treeHeightBlocks * blockWidth)
+
+	// setup sun
+	sunColor = color(255, 213, 0)
+	sunFunctionCoef = Math.pow(windowWidth/2, 2) / canvasHeight
+
+	// moon
+	moonColor = color(150, 149, 149)
+	moonCraterColor = color(94, 94, 94)
+
+	// sky
+	skyColor = color(59, 163, 255)
+
+	// time
+	timeStepWidth = windowWidth/maxTime
+	document.getElementById('timeSpeedInput').value = timeAdvance
+
+	// clouds
+	let cloudsToGenerate = (Math.random() * maxClouds) + 2
+	for(let i = 0; i < cloudsToGenerate; i++){
+		let cloudX = Math.random() * windowWidth
+		let cloudY = (Math.random() * (1*(canvasHeight/2))) + atmosphereHeight
+		let cloudWidth = maxCloudWidth * Math.random()
+		let cloudHeight = Math.random() * cloudWidth
+		let cloudVX = (Math.random() * maxCloudSpeed) + minCloudSpeed
+		let cloudColor = 255 - (Math.random() * cloudColorMod)
+		clouds.push( new Cloud(cloudX, cloudY, cloudVX, cloudWidth, cloudHeight, cloudColor, false))
+	}
+
+	// atmosphere lines
+	let linesToMake = atmosphereHeight
+	let linesMade = 0
+	while(linesMade < linesToMake){
+		let lineY = atmosphereHeight - linesMade
+		atmosphereLines.push( new AtmosphereLine(lineY) )
+		linesMade++
+	}
+
+	// rain color
+	rainColor = color(42, 74, 250)
+
+	// stars
+	let starsToMake = Math.random() * maxStars
+	for(let i = 0; i < starsToMake; i++) {
+		let starX = Math.random() * windowWidth
+		let starY = Math.random() * canvasHeight
+		let starColor = 255 - (Math.random() * starBrightnessMod)
+		stars.push( new Star( starX, starY, starColor ) )
+	}
+
+
+	// action image dicts
+	let lookForTaskActionImagesDict = {}
+	lookForTaskActionImagesDict['left'] = [walking_a_img, walking_b_img]
+	lookForTaskActionImagesDict['right'] = [walking_a_img, walking_b_img]
+
+	// farmer action images
+	let lookForTaskActionImages = new ActionImages('lookForTaskActionImages', lookForTaskActionImagesDict)
+
+	// farmer actions
+	let lookForTaskAction = new Action('lookForTaskAction', lookForTaskActionImages, 0)
+
+	// farmer
+	let farmerX = houseX + (houseWidthBlocks*blockWidth/2)
+	let farmerY = canvasHeight - blockWidth - (farmerHeightBlocks*blockWidth)
+	let farmerVX = 0
+	let farmerAction = lookForTaskAction
+	let farmerHeight = farmerHeightBlocks * blockWidth
+	let farmerWidth = farmerHeight/2
+	farmer = new Farmer(farmerX, farmerY, farmerVX, farmerWidth, farmerHeight, 'left', false, lookForTaskAction, 0, 'Bob Tod')
+
+}
+
+function draw() {
+
+
+	background(skyColor);
+
+	// sun/moon
+	drawSunMoon()
+
+	// clouds
+	drawClouds()	
+
+	// dirt
+	for(const block of blocks){
+		image(block.img, block.x, block.y, block.width, block.height)
+	}
+
+	// house
+	image(houseImg, houseX, houseY, houseWidthBlocks * blockWidth, houseWidthBlocks * blockWidth)
+
+	// well
+	image(wellImg, wellX, wellY, wellWidthBlocks * blockWidth, wellWidthBlocks * blockWidth)	
+
+	// tree
+	image(treeImg, treeX, treeY, treeWidthBlocks * blockWidth, treeHeightBlocks * blockWidth)
+
+	//farmer
+	if(farmer.isVisible)
+		image(farmer.action.actionImages.imgsDict[farmer.direction][farmer.action.imagePhase], farmer.x, farmer.y, farmer.width, farmer.height)
+
+	farmer.act()
+
+	// time
+	time += timeAdvance
+	if(time > maxTime){
+		time = 0
+		isDay = !isDay
+	}
+}
+
+function drawAtmosphere() {
+	for(const line of atmosphereLines){
+		let lineColorRed = red(skyColor)
+		let lineColorGreen = green(skyColor)
+		let lineColorBlue = blue(skyColor)
+
+		let redDiff = 255 - lineColorRed
+		let greenDiff = 255 - lineColorGreen
+		let blueDiff = 255 - lineColorBlue
+
+		let redAdd = redDiff * ((line.y)/atmosphereHeight)
+		let greenAdd = greenDiff * ((line.y)/atmosphereHeight)
+		let blueAdd = blueDiff * ((line.y)/atmosphereHeight)
+
+		let lineColor = color(lineColorRed + redAdd, lineColorGreen + greenAdd, lineColorBlue + blueAdd)
+		stroke(lineColor)
+		fill(lineColor)
+		strokeWeight(1)
+		rect(0, atmosphereHeight - line.y, windowWidth, atmosphereHeight - line.y)
+	}
+}
+
+function drawRain(cloud) {
+	let rainCopy = []
+	for(const drop of cloud.rain){
+		fill(rainColor)
+		stroke(rainColor)
+		strokeWeight(3)
+		point(drop.x, drop.y)
+		drop.x += drop.vx
+		drop.y += drop.vy
+		drop.vx *= airResistance
+		drop.vy *= gravityVY
+		if(drop.y < (canvasHeight - blockWidth)){
+			rainCopy.push(drop)
+		}
+	}
+	cloud.rain = rainCopy
+}
+
+function drawClouds(){
+	let cloudsCopy = []
+	for(const cloud of clouds){
+		let cloudColor = color(cloud.color,cloud.color,cloud.color)
+
+		// start rain?
+		if(cloud.color < rainCloudDarkness && cloud.width > (maxCloudWidth/2) && Math.random() > (rainStartThreshold)){
+			if(cloud.raining && Math.random() > (rainEndThreshold)){
+				cloud.raining = false
+			}
+			else{
+				cloud.raining = true
+			}
+		}
+
+		if(cloud.raining){
+			// spawn rain
+			let dropsToMake = Math.floor(Math.random() * maxRainDropped)
+			for(var i  = 0; i < dropsToMake; i++){
+				let rainX = cloud.x + (Math.random() * cloud.width)
+				let rainY = cloud.y + cloud.height
+				let rainVX = cloud.vx
+				let rainVY = rainInitVY
+				cloud.rain.push(new Rain(rainX, rainY, rainVX, rainVY))
+			}
+
+			//draw rain
+			drawRain(cloud)
+		}
+
+		fill(cloudColor)
+		stroke(cloudColor)
+		rect(cloud.x, cloud.y, cloud.width, cloud.height, cloudRadius,cloudRadius,cloudRadius,cloudRadius)
+		cloud.x += cloud.vx
+		if(cloud.x <= windowWidth){
+			cloudsCopy.push(cloud)
+		}
+	}
+	clouds = cloudsCopy
+
+	spawnClouds()
+}
+
+function spawnClouds(){
+	if(Math.random() > cloudSpawnThreshold){
+		let cloudY = Math.random() * (2*(canvasHeight/3))
+		let cloudWidth = maxCloudWidth * Math.random()
+		let cloudX = -1 * cloudWidth
+		let cloudHeight = Math.random() * cloudWidth
+		let cloudVX = (Math.random() * maxCloudSpeed)
+		let cloudColor = 255 - (Math.random() * cloudColorMod)
+		clouds.push( new Cloud(cloudX, cloudY, cloudVX, cloudWidth, cloudHeight, cloudColor, false) )
+	}
+}
+
+function drawSunMoon() {
+
+	sunX = time * timeStepWidth
+	let shiftedSunX = sunX - (windowWidth/2)
+	sunY = ((1/sunFunctionCoef) * Math.pow(shiftedSunX, sunFunctionPow))
+	
+
+	if(isDay){
+
+		document.getElementById('overlay').style.filter = 'brightness(1)'
+		
+		// sun rays
+		// let rayCount = Math.floor(Math.random()*12)
+		// for(let i = 0; i < rayCount; i++){
+			
+		// 	// ray color
+		// 	let rayColorRed = 255
+		// 	let rayColorGreen = 255 - Math.floor((Math.random() * 140))
+		// 	let rayColorBlue = 0
+		// 	let rayColor = color(rayColorRed, rayColorGreen, rayColorBlue)
+
+		// 	// ray length
+		// 	let rayLength = Math.floor(Math.random() * sunWidth * 0.5) * randNeg()
+		// 	let rayWidth = Math.floor(Math.random() * 5)
+		// 	let rayUp = Math.floor(Math.random() * sunWidth * 0.5) * randNeg()
+
+		// 	fill(rayColor)
+		// 	stroke(rayColor)
+		// 	strokeWeight(rayWidth)
+		// 	line(sunX, sunY + (sunWidth/2), sunX + rayLength, sunY + (sunWidth/2) + rayUp)
+		// }
+
+		
+
+		// sky brightness
+		let brightness = 0.5 - map(sunY, 0, canvasHeight, 0, 0.5)
+		skyColor = color(59 + (brightness*(255-59)), 163 + (brightness*(255-163)), 255)
+
+		drawAtmosphere()
+
+		// sun
+		fill(sunColor)
+		stroke(sunColor)
+		strokeWeight(1)	
+		circle(sunX, sunY + sunWidth/2, sunWidth)
+
+
+	}else{
+		
+
+		let brightness = map(sunY, 0, canvasHeight, 0.5, 1)
+
+		// darkness
+		document.getElementById('overlay').style.filter = 'brightness('+ brightness +')'
+
+		// sky darkness
+		let darnkness = 0.5 - map(sunY, 0, canvasHeight, 0, 0.5)
+		skyColor = color(59-(darnkness*59), 163-(darnkness*163), 255-(darnkness * 255))
+
+		drawAtmosphere()
+
+		fill(moonColor)
+		stroke(moonColor)
+		circle(sunX, sunY + moonWidth, moonWidth)
+		fill(moonCraterColor)
+		stroke(moonCraterColor)
+		circle(sunX + (moonWidth/5), sunY + moonWidth + (moonWidth/5), moonWidth/6)
+		circle(sunX + (moonWidth/10), sunY + moonWidth + (moonWidth/6), moonWidth/4)
+		circle(sunX - (moonWidth/6), sunY + moonWidth - (moonWidth/6), moonWidth/3)
+
+		// stars
+		let starVisibleBrightness = map(Math.abs(time-12), 0, 12, 255-starBrightnessMod, 255)
+		for(const star of stars) {
+			
+			if(star.color < starVisibleBrightness)
+				continue
+
+			let starColor = color(star.color,star.color,star.color)
+			fill(starColor)
+			stroke(starColor)
+			strokeWeight(2)
+			point(star.x, star.y)
+		}
+
+	}
+
+}
+
+function randNeg(){
+	if(Math.random() > 0.5)
+		return 1
+	else
+		return -1
+}
+
+function changeTimeSpeed(timeSpeedInput){
+	timeAdvance = parseFloat(timeSpeedInput.value)
+}
+
+</script>
+<style>
+	*{
+		margin: 0;
+		padding: 0;
+		box-sizing: border-box;
+	}
+</style>

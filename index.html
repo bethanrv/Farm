@@ -16,11 +16,17 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.7.0/p5.min.js" integrity="sha512-bcfltY+lNLlNxz38yBBm/HLaUB1gTV6I0e+fahbF9pS6roIdzUytozWdnFV8ZnM6cSAG5EbmO0ag0a/fLZSG4Q==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
 <script>
 
+/* to do
+	- remove overlay
+		- find working brightness solution
+		- apply filter to bounded area?
+*/
+
 let blocksAcross = 0
 let blockWidth = 25
 let blocks = []
-let canvasHeight = 200
-let atmosphereHeight = 50
+let canvasHeight = 300
+let atmosphereHeight = 200
 let time = 0
 let maxTime = 24
 let timeStepWidth
@@ -33,13 +39,13 @@ let maxCloudSpeed = 0.2
 let minCloudSpeed = 0.01
 let cloudRadius = 3
 let cloudSpawnThreshold = 0.999
-let cloudColorMod = 80
-let rainStartThreshold = 0.999
-let rainEndThreshold = 0.999
+let cloudColorMod = 100
+let rainStartThreshold = 0.99
+let rainEndThreshold = 0.99
 let maxRainDropped = 2
-let gravityVY = 1.1
-let airResistance = 0.9
-let rainCloudDarkness = 255-(2*cloudColorMod/3)
+let gravityVY = 0.05
+let airResistance = 0.95
+let rainCloudDarkness = 255-(3*cloudColorMod/4)
 let atmosphereLines = []
 
 let stars = []
@@ -50,6 +56,7 @@ let rain = []
 let rainColor
 let rainInitVY = 0.2
 let walkingSpeed = 0.67
+let bucketDrops = []
 
 class Block {
 	constructor(x, y, width, height, img){
@@ -58,6 +65,9 @@ class Block {
 		this.width = width
 		this.height = height
 		this.img = img
+		this.hasPlant = false
+		this.plant
+		this.isFarmable
 	}
 }
 
@@ -75,6 +85,7 @@ class Cloud {
 }
 
 class Rain {
+	static dropHydration = 0.005
 	constructor( x, y, vx, vy){
 		this.x = x
 		this.y = y
@@ -94,6 +105,27 @@ class Star {
 class AtmosphereLine {
 	constructor(y, color){
 		this.y = y
+	}
+}
+
+class Plant {
+	static minHydrationToGrow = 0.5
+	static growthRate = 1/9600
+	static maxStage = 4
+	static heightStep = blockWidth/4
+	static startingHeight = 3*(blockWidth/4)
+	static dehydrationRate = 1/400
+	static dehydrationStep = 0.1
+	constructor( direction ){
+		this.width = Plant.startingHeight
+		this.height = Plant.startingHeight
+		this.direction = direction
+		this.stage = 0
+		this.hydration = 1
+	}
+	grow(){
+		this.stage++
+		this.height += Plant.heightStep
 	}
 }
 
@@ -123,81 +155,377 @@ class Farmer {
   	}
   }
   act(){
-  	if(this.action.name == 'lookForTaskAction'){
+  	if(this.action.name == 'lookForTaskAction')
   		this.lookForTaskAction()
-  	}else if(this.action.name == 'walking'){
+  	else if(this.action.name == 'walking')
   		this.walk()
-  	}
+  	else if(this.action.name == 'walkingWithSeeds')
+  		this.walkWithSeeds()
+  	else if(this.action.name == 'planting')
+  		this.plant()
+  	else if(this.action.name == 'walkingWithBucket')
+  		this.walkWithBucket()
+  	else if(this.action.name == 'watering')
+  		this.water()
   }
   lookForTaskAction(){
-  	if(this.action.phase == 0){ // search for available tasks
-  		let foundTask = false
-  		if(!foundTask){
+  	if(isDay && this.action.phase == 0){ // search for available tasks
+  		if(hasPlantableBlock() && Math.random() >= 0.9){ // go plant at given block
+  			this.action = new Action('walkingWithSeeds', walkingWithSeedsActionImgs)
+  		}
+  		else if(plantNeedsWatering() && Math.random() >= 0.8){
+  			this.action = new Action('walkingWithBucket', walkingWithWaterBucketActionImgs)
+  		}
+  		else if(Math.random() >= 0.9){
   			this.action = new Action('walking', walkingActionImgs) // walk somewhere
   		}
   	}
   }
-  walk(){
-  	if(this.action.phase == 0){ // pick somewhere to walk
-  		this.targetX = Math.random() * windowWidth
+  walk() {
+    if (this.action.phase == 0) {
+      // pick somewhere to walk
+      this.targetX = Math.random() * windowWidth;
+      this.isVisible = true;
+      this.imagePhaser();
+      if (this.x > this.targetX) {
+        this.direction = 'left';
+        this.vx = -1 * walkingSpeed;
+      } else {
+        this.direction = 'right';
+        this.vx = walkingSpeed;
+      }
+      this.action.phase = 1;
+    } else if (this.action.phase == 1) {
+      // move
+      this.imagePhaser();
+      let farmerMiddle = this.x + (this.width / 2);
+      if (Math.abs(farmerMiddle - this.targetX) < (this.width / 2)) { //reached target
+        this.action.phase = 2;
+        this.pauseFrames = 180;
+        this.vx = 0;
+      } else {
+        this.x += this.vx;
+      }
+    } else if (this.action.phase == 2) {
+      // pause
+      this.pauseFrames--;
+      if (this.pauseFrames == 0) { //change direction
+        this.action.phase = 3;
+        if (this.direction == 'left') {
+          this.direction = 'right';
+          this.vx = walkingSpeed;
+        } else {
+          this.direction = 'left';
+          this.vx = -1 * walkingSpeed;
+        }
+        this.targetX = houseX + ((houseWidthBlocks * blockWidth) / 2);
+      }
+    } else if (this.action.phase == 3) {
+      // return home
+      this.imagePhaser();
+      let farmerMiddle = this.x + (this.width / 2);
+      if (Math.abs(farmerMiddle - this.targetX) < (this.width / 2)) { // home?
+        this.action.phase = 4;
+        this.pauseFrames = 60;
+        this.vx = 0;
+      } else {
+        this.x += this.vx;
+      }
+    } else if (this.action.phase == 4) {
+      // enter home
+      this.pauseFrames--;
+      if (this.pauseFrames == 0) {
+        this.isVisible = false;
+        this.pauseFrames = 180;
+        this.action.phase = 5;
+      }
+    } else if (this.action.phase == 5) {
+      // cooldown
+      this.pauseFrames--;
+      if (this.pauseFrames == 0) {
+        this.action = new Action('lookForTaskAction', walkingActionImgs);
+      }
+    }
+  } // end walk
+
+  walkWithSeeds(){ // walk to middle most farmable block and pause
+  	if(this.action.phase == 0){ // where to go?
   		this.isVisible = true
-  		this.imagePhaser()
-  		if(this.x > this.targetX){
+  		let blockToSeed = getPlantingBlock() // find middlemost farmable block
+  		if(this.x < blockToSeed.x){ // change direction
+  			this.direction = 'right'
+  			this.vx = walkingSpeed
+  		}
+  		else{
   			this.direction = 'left'
-			this.vx = -1 * walkingSpeed
-		}else{
-			this.direction = 'right'
-			this.vx = walkingSpeed
-		}
-  		this.action.phase = 1
-  	}else if(this.action.phase == 1){ // move
+  			this.vx = -1 * walkingSpeed
+  		}
+  		this.targetX = blockToSeed.x + (blockToSeed.width/2) // set target
+  		this.action.phase = 1 // next phase
+  	}
+  	else if(this.action.phase == 1){ // move to target
   		this.imagePhaser()
   		let farmerMiddle = this.x + (this.width/2)
-  		if(Math.abs(farmerMiddle - this.targetX) < (this.width/2)){ //reached target
+  		if ( Math.abs(farmerMiddle - this.targetX) <= blockWidth/2 ){ // reached target? stop
   			this.action.phase = 2
-  			this.pauseFrames = 180
+  			this.pauseFrames = 30
   			this.vx = 0
-  		}else{
-			this.x += this.vx
   		}
-  	}else if(this.action.phase == 2){ // pause
+  		else{ // move to target
+  			this.x += this.vx
+  		}
+  	}
+  	else if(this.action.phase == 2){ // pause at target and switch to planting task
   		this.pauseFrames--
-  		if(this.pauseFrames == 0){ //change direction
-  			this.action.phase = 3
-  			if(this.direction == 'left'){
-  				this.direction = 'right'
-  				this.vx = walkingSpeed
-  			}
-  			else{
-  				this.direction = 'left'
-  				this.vx = -1*walkingSpeed
-  			}
-  			this.targetX = houseX + ( (houseWidthBlocks * blockWidth) / 2 )
+  		if(this.pauseFrames == 0){
+  			this.action = new Action('planting', plantingActionImgs)
   		}
-  	}else if(this.action.phase == 3){ // return home
-  		this.imagePhaser()
-		let farmerMiddle = this.x + (this.width/2)
-  		if(Math.abs(farmerMiddle - this.targetX) < (this.width/2)){ //reached target
+  	}
+  	else if(this.action.phase == 3){ // pause before going home
+  		this.pauseFrames--
+  		if(this.pauseFrames == 0){
   			this.action.phase = 4
+  		}
+  	}
+  	else if(this.action.phase == 4){ // turn to home
+  		if(this.x < houseX){ // face house
+  			this.direction = 'right'
+  			this.vx = walkingSpeed
+  		}else{
+  			this.direction = 'left'
+  			this.vx = -1 * walkingSpeed
+  		}
+  		this.targetX = houseX + (houseWidthBlocks*blockWidth/2)
+  		this.action.phase = 5
+  	}
+  	else if (this.action.phase == 5) { // walk home
+  		this.imagePhaser()
+  		let farmerMiddle = this.x + (this.width/2)
+  		if(Math.abs(farmerMiddle - this.targetX) < (this.width/2)){ // home?
+  			this.action.phase = 6
   			this.pauseFrames = 60
   			this.vx = 0
   		}else{
-			this.x += this.vx
+  			this.x += this.vx
   		}
-  	}else if(this.action.phase == 4){ // enter home
-  		this.pauseFrames--
+  	}
+  	else if (this.action.phase == 6) { //enter home
+			this.pauseFrames--
   		if(this.pauseFrames == 0){
   			this.isVisible = false
   			this.pauseFrames = 180
-  			this.action.phase = 5
+  			this.action.phase = 7
   		}
-  	}else if(this.action.phase == 5){ // cooldown
+  	}
+  	else if(this.action.phase == 7) { // cooldown
   		this.pauseFrames--
   		if(this.pauseFrames == 0){
   			this.action = new Action('lookForTaskAction', walkingActionImgs)
   		}
   	}
-  }
+  }// end walking with seeds
+
+  plant(){
+  	if(this.action.phase == 0){ // wait to bend further
+  		this.pauseFrames = 30
+  		this.action.phase = 1
+  	}
+  	else if(this.action.phase == 1){
+  		this.pauseFrames--
+  		if(this.pauseFrames == 0){ // bend all the way
+  			this.action.imagePhase++
+  			this.action.phase = 2
+  			this.pauseFrames = 30
+  		}
+  	}
+  	else if(this.action.phase == 2){
+  		this.pauseFrames--
+  		if(this.pauseFrames == 0){ // add plant
+  			this.action.phase = 3
+  			this.pauseFrames = 60
+  			// get block to add plant to
+  			let plantingBlock = getBlockByX(this.targetX - (blockWidth/2))
+  			plantingBlock.hasPlant = true
+  			let randDriection = 'left'
+  			if(Math.random() > 0.5)
+  				randDriection = 'right'
+  			plantingBlock.plant = new Plant(randDriection)
+  			this.action.phase = 3
+  			this.pauseFrames = 30
+  		}
+  	}
+  	else if(this.action.phase == 3) { // wait to bend up
+  		this.pauseFrames--
+  		if(this.pauseFrames == 0){
+  			this.action.imagePhase--
+  			this.action.phase = 4
+  			this.pauseFrames = 30
+  		}
+  	}
+  	else if(this.action.phase == 4) { // cooldown, set back to walkingWithSeeds
+  		this.pauseFrames--
+  		if(this.pauseFrames == 0){
+  			this.action = new Action('walkingWithSeeds', walkingWithSeedsActionImgs)
+  			this.action.phase = 3
+  			this.pauseFrames = 60
+  		}
+  	}
+  }// end plant action
+  walkWithBucket(){
+  	if(this.action.phase == 0){ // get plant to walk to 
+  		this.isVisible = true
+  		this.targetX = getPlantBlockToWater().x + (blockWidth/2)
+  		if(this.x < this.targetX){
+  			this.direction = 'right'
+  			this.vx = walkingSpeed
+  		}else{
+  			this.direction = 'left'
+  			this.vx = -1 * walkingSpeed
+  		}
+  		this.action.phase = 1 // next phase
+  	} // end phase 0
+  	else if(this.action.phase == 1){
+  		this.imagePhaser()
+  		let farmerMiddle = this.x + (this.width/2)
+  		if ( Math.abs(farmerMiddle - this.targetX) <= blockWidth/2 ){ // reached target? stop
+  			this.action.phase = 2
+  			this.pauseFrames = 30
+  			this.vx = 0
+  		}
+  		else{ // move to target
+  			this.x += this.vx
+  		}
+  	}// end phase 1
+  	else if(this.action.phase == 2){ // pause at target and switch to watering task
+  		this.pauseFrames--
+  		if(this.pauseFrames == 0){
+  			this.action = new Action('watering', wateringActionImgs)
+  			this.pauseFrames = 180
+  		}
+  	}
+  	else if(this.action.phase == 3) { // face home
+  		if(this.x < houseX){ // face house
+  			this.direction = 'right'
+  			this.vx = walkingSpeed
+  		}else{
+  			this.direction = 'left'
+  			this.vx = -1 * walkingSpeed
+  		}
+  		this.targetX = houseX + (houseWidthBlocks*blockWidth/2)
+  		this.action.phase = 4
+  	}
+  	else if(this.action.phase == 4){
+  		this.imagePhaser()
+  		let farmerMiddle = this.x + (this.width/2)
+  		if(Math.abs(farmerMiddle - this.targetX) < (this.width/2)){ // home?
+  			this.action.phase = 5
+  			this.pauseFrames = 60
+  			this.vx = 0
+  		}else{
+  			this.x += this.vx
+  		}
+  	} // end phase 4
+  	else if (this.action.phase == 5) { //enter home
+			this.pauseFrames--
+  		if(this.pauseFrames == 0){
+  			this.isVisible = false
+  			this.pauseFrames = 120
+  			this.action.phase = 6
+  		}
+  	}
+  	else if(this.action.phase == 6) { // cooldown
+  		this.pauseFrames--
+  		if(this.pauseFrames == 0){
+  			this.action = new Action('lookForTaskAction', walkingActionImgs)
+  		}
+  	}
+  } // end walk with bucket
+
+  water(){ // water plant
+  	if(this.action.phase == 0){ // spawn water drops
+  		this.pauseFrames--
+  		if(Math.random() > 0.5){
+	  		let rainX = this.x
+	  		let rainVX = -0.25 * Math.random()
+	  		let rainY = canvasHeight - blockWidth - (this.height/4)
+	  		let rainVY = gravityVY
+	  		if(this.direction == 'right'){
+	  			rainX += this.width
+	  			rainVX *= -1
+	  		}
+	  		bucketDrops.push(new Rain(rainX, rainY, rainVX, rainVY))
+	  	}
+	  	if( this.pauseFrames == 0 ){
+	  		this.action.phase = 1
+	  		// set plant to hydrated
+	  		let blockWatering = getBlockByX(this.targetX - (blockWidth/2))
+	  		blockWatering.plant.hydration = 1
+	  	}
+  	} // end phase 0
+  	else if(this.action.phase == 1){
+  		this.action = new Action('walkingWithBucket', walkingWithWaterBucketActionImgs)
+  		this.action.phase = 3
+  	}
+  }// end watering
+}
+
+function getBlockByX(x){
+	let closestBlock = blocks[0]
+	let closestBlockDist = Math.abs(x - blocks[0].x)
+	for(const block of blocks){
+		if(Math.abs(x - block.x) < closestBlockDist){
+			closestBlockDist = Math.abs(x - block.x)
+			closestBlock = block
+		}
+	}
+	return closestBlock
+}
+
+function getPlantingBlock(){
+	let middleX  = windowWidth/2
+	let mostMiddleFarmableBlock = blocks[0]
+	let mostMiddleFarmableBlockX = blocks[0].x + (blocks[0].width/2)
+	let farmableBlockExists = false
+	for(const block of blocks){
+		if(block.isFarmable && !block.hasPlant){
+			let blockMiddle = block.x + (block.width/2)
+			farmableBlockExists = true
+			if ( Math.abs(blockMiddle - middleX) < Math.abs(mostMiddleFarmableBlockX - middleX) )
+				mostMiddleFarmableBlock = block
+				mostMiddleFarmableBlockX = blockMiddle
+		}
+	}
+	if(farmableBlockExists)
+		return mostMiddleFarmableBlock
+	else
+		return -1
+}
+
+function hasPlantableBlock(){
+	for(const block of blocks){
+		if(block.isFarmable && !block.hasPlant){
+			return true
+		}
+	}
+	return false
+}
+
+function plantNeedsWatering() {
+	for(const block of blocks){
+		if(block.hasPlant && block.plant.hydration < Plant.minHydrationToGrow){
+			return true
+		}
+	}
+	return false
+}
+
+function getPlantBlockToWater() {
+	for(const block of blocks){
+		if(block.hasPlant && block.plant.hydration < Plant.minHydrationToGrow){
+			return block
+		}
+	}
+	return -1
 }
 
 class Action {
@@ -258,19 +586,133 @@ let treeY
 let treeWidthBlocks = 3
 let treeHeightBlocks = 4
 
+let plantImgs = {}
+let plantDehydratedImgs = {}
+let plant_left_a_url = 'https://i.ibb.co/k0MjmFT/plant-a-left.png'
+let plant_left_a_img
+
+let plant_a_right_url = 'https://i.ibb.co/n1JdS9v/plant-a-right.png'
+let plant_a_right_img
+
+let plant_b_left_url = 'https://i.ibb.co/wCKRNgS/plant-b-left.png'
+let plant_b_left_img
+
+let plant_b_right_url = 'https://i.ibb.co/p6DWqj6/plant-b-right.png'
+let plant_b_right_img
+
+let plant_c_left_url = 'https://i.ibb.co/jTQ1HHX/plant-c-left.png'
+let plant_c_left_img
+
+let plant_c_right_url = 'https://i.ibb.co/bFTRwZq/plant-c-right.png'
+let plant_c_right_img
+
+let plant_d_left_url = 'https://i.ibb.co/FnHXwjZ/plant-d-left.png'
+let plant_d_left_img
+
+let plant_d_right_url = 'https://i.ibb.co/jbbqW5b/plant-d-right.png'
+let plant_d_right_img
+
+let plant_e_left_url = 'https://i.ibb.co/G2w7P56/plant-e-left.png'
+let plant_e_left_img
+
+let plant_e_right_url = 'https://i.ibb.co/RvdCZHR/plant-e-right.png'
+let plant_e_right_img
+
+let plant_left_a_url_dehydrated = 'https://i.ibb.co/Vxk6wFJ/plant-a-left-dehydrated.png'
+let plant_left_a_img_dehydrated
+
+let plant_a_right_url_dehydrated = 'https://i.ibb.co/HtfSVNr/plant-a-right-dehydrated.png'
+let plant_a_right_img_dehydrated
+
+let plant_b_left_url_dehydrated = 'https://i.ibb.co/QM2cqrj/plant-b-left-dehydrated.png'
+let plant_b_left_img_dehydrated
+
+let plant_b_right_url_dehydrated = 'https://i.ibb.co/N6Y2by8/plant-b-right-dehydrated.png'
+let plant_b_right_img_dehydrated
+
+let plant_c_left_url_dehydrated = 'https://i.ibb.co/BTZ6BrC/plant-c-left-dehydrated.png'
+let plant_c_left_img_dehydrated
+
+let plant_c_right_url_dehydrated = 'https://i.ibb.co/rQP8ZXx/plant-c-right-dehydrated.png'
+let plant_c_right_img_dehydrated
+
+let plant_d_left_url_dehydrated = 'https://i.ibb.co/ChT3DxB/plant-d-left-dehydrated.png'
+let plant_d_left_img_dehydrated
+
+let plant_d_right_url_dehydrated = 'https://i.ibb.co/F4pvM4h/plant-d-right-dehydrated.png'
+let plant_d_right_img_dehydrated
+
+let plant_e_left_url_dehydrated = 'https://i.ibb.co/2WSCkqd/plant-e-left-dehydrated.png'
+let plant_e_left_img_dehydrated
+
+let plant_e_right_url_dehydrated = 'https://i.ibb.co/vDbMPqt/plant-e-right-dehydrated.png'
+let plant_e_right_img_dehydrated
+
 let farmer
 let farmerHeightBlocks = 1
 
-let walking_a_url = 'https://i.ibb.co/6BjcqNh/walking-a.png'
+let walking_a_url = 'https://i.ibb.co/7JYNFMG/walking-c.png'
 let walking_a_img
 
-let walking_b_url = 'https://i.ibb.co/rdBzZtk/walking-b.png'
+let walking_b_url = 'https://i.ibb.co/St3ynDL/walking-a.png'
 let walking_b_img
 
-let walking_c_url = 'https://i.ibb.co/4js4nwq/walking-c.png'
-let walking_c_img
 
-let walkingActionImgs
+let walking_with_seeds_a_left_url = 'https://i.ibb.co/MghDySx/walking-seed-bag-c-left.png'
+let walking_with_seeds_a_left_img
+
+let walking_with_seeds_a_right_url = 'https://i.ibb.co/GCBv0kv/walking-seed-bag-c-right.png'
+let walking_with_seeds_a_right_img
+
+let walking_with_seeds_b_left_url = 'https://i.ibb.co/r5zGr65/walking-seed-bag-a-left.png'
+let walking_with_seeds_b_left_img
+
+let walking_with_seeds_b_right_url = 'https://i.ibb.co/vdH3K1q/walking-seed-bag-a-right.png'
+let walking_with_seeds_b_right_img
+
+
+let planting_a_right_url = 'https://i.ibb.co/qgKRjXP/bending-seed-bag-a-right.png'
+let planting_a_right_img
+
+let planting_b_right_url = 'https://i.ibb.co/Tc2rqbX/bending-seed-bag-b-right.png'
+let planting_b_right_img
+
+let planting_a_left_url = 'https://i.ibb.co/yph0Ht4/bending-seed-bag-a-left.png'
+let planting_a_left_img
+
+let planting_b_left_url = 'https://i.ibb.co/g4hFF07/bending-seed-bag-b-left.png'
+let planting_b_left_img
+
+let walkingWithWaterBucketImgs = {}
+let walking_with_water_bucket_a_left_url = 'https://i.ibb.co/KNQsGmQ/walking-watering-can-c-left.png'
+let walking_with_water_bucket_a_left_img
+
+let walking_with_water_bucket_a_right_url = 'https://i.ibb.co/N2jtvGR/walking-watering-can-c-right.png'
+let walking_with_water_bucket_a_right_img
+
+let walking_with_water_bucket_b_left_url = 'https://i.ibb.co/xG9RhWc/walking-watering-can-a-left.png'
+let walking_with_water_bucket_b_left_img
+
+let walking_with_water_bucket_b_right_url = 'https://i.ibb.co/WG5QBj7/walking-watering-can-a-right.png'
+let walking_with_water_bucket_b_right_img
+
+let wateringImgs = {}
+let watering_left_url = 'https://i.ibb.co/3rnmcyn/bending-watering-can-a-left.png'
+let watering_left_img
+
+let watering_right_url = 'https://i.ibb.co/Ky7txGJ/bending-watering-can-a-right.png'
+let watering_right_img
+
+
+
+
+
+
+
+let plantingActionImgs // planting
+let walkingWithSeedsActionImgs // walkingWithSeeds
+let walkingActionImgs // walking
+let walkingWithWaterBucketActionImgs // walkingWithBucket
 
 function randomDirt(){
 	return dirtBlockImgs[Math.floor(Math.random() * dirtBlockImgs.length)]
@@ -284,16 +726,103 @@ function preload() {
 	wellImg = loadImage(wellUrl)
 	treeImg = loadImage(treeUrls[Math.floor( Math.random() * treeUrls.length )])
 
+	// plant images
+	plant_left_a_img = loadImage(plant_left_a_url) 
+	plant_a_right_img = loadImage(plant_a_right_url)
+	plant_b_left_img = loadImage(plant_b_left_url)
+	plant_b_right_img = loadImage(plant_b_right_url)
+	plant_c_left_img = loadImage(plant_c_left_url)
+	plant_c_right_img = loadImage(plant_c_right_url)
+	plant_d_left_img = loadImage(plant_d_left_url)
+	plant_d_right_img = loadImage(plant_d_right_url)
+	plant_e_left_img = loadImage(plant_e_left_url)
+	plant_e_right_img = loadImage(plant_e_right_url)
+	plant_left_a_img_dehydrated = loadImage(plant_left_a_url_dehydrated)
+	plant_a_right_img_dehydrated = loadImage(plant_a_right_url_dehydrated)
+	plant_b_left_img_dehydrated = loadImage(plant_b_left_url_dehydrated)
+	plant_b_right_img_dehydrated = loadImage(plant_b_right_url_dehydrated)
+	plant_c_left_img_dehydrated = loadImage(plant_c_left_url_dehydrated)
+	plant_c_right_img_dehydrated = loadImage(plant_c_right_url_dehydrated)
+	plant_d_left_img_dehydrated = loadImage(plant_d_left_url_dehydrated)
+	plant_d_right_img_dehydrated = loadImage(plant_d_right_url_dehydrated)
+	plant_e_left_img_dehydrated = loadImage(plant_e_left_url_dehydrated)
+	plant_e_right_img_dehydrated = loadImage(plant_e_right_url_dehydrated)
+	plantImgs['left'] = [
+		plant_left_a_img,
+		plant_b_left_img,
+		plant_c_left_img,
+		plant_d_left_img,
+		plant_e_left_img
+	]
+	plantImgs['right'] = [
+		plant_a_right_img,
+		plant_b_right_img,
+		plant_c_right_img,
+		plant_d_right_img,
+		plant_e_right_img
+	]
+	plantDehydratedImgs['left'] = [
+		plant_left_a_img_dehydrated,
+		plant_b_left_img_dehydrated,
+		plant_c_left_img_dehydrated,
+		plant_d_left_img_dehydrated,
+		plant_e_left_img_dehydrated
+	]
+	plantDehydratedImgs['right'] = [
+		plant_a_right_img_dehydrated,
+		plant_b_right_img_dehydrated,
+		plant_c_right_img_dehydrated,
+		plant_d_right_img_dehydrated,
+		plant_e_right_img_dehydrated
+	]
+
+
 	// farmer images
 	walking_a_img = loadImage(walking_a_url)
 	walking_b_img = loadImage(walking_b_url)
-	walking_c_img = loadImage(walking_c_url)
+
 	let walkingActionImgsDict = {}
-	walkingActionImgsDict['left'] = [walking_a_img,walking_c_img]
-	walkingActionImgsDict['right'] = [walking_a_img, walking_c_img]
+	walkingActionImgsDict['left'] = [walking_a_img,walking_b_img]
+	walkingActionImgsDict['right'] = [walking_a_img, walking_b_img]
+
 	walkingActionImgs = new ActionImages('walking', walkingActionImgsDict)
 
+	walking_with_seeds_a_left_img = loadImage(walking_with_seeds_a_left_url)
+	walking_with_seeds_a_right_img = loadImage(walking_with_seeds_a_right_url)
+	walking_with_seeds_b_left_img = loadImage(walking_with_seeds_b_left_url)
+	walking_with_seeds_b_right_img = loadImage(walking_with_seeds_b_right_url)
 
+	let walkingWithSeedsActionImgsDict = {}
+	walkingWithSeedsActionImgsDict['left'] = [walking_with_seeds_a_left_img,walking_with_seeds_b_left_img]
+	walkingWithSeedsActionImgsDict['right'] = [walking_with_seeds_a_right_img, walking_with_seeds_b_right_img]
+	walkingWithSeedsActionImgs = new ActionImages('walkingWithSeeds', walkingWithSeedsActionImgsDict)
+
+
+	planting_a_right_img = loadImage(planting_a_right_url)
+	planting_a_left_img = loadImage(planting_a_left_url)
+	planting_b_right_img = loadImage(planting_b_right_url)
+	planting_b_left_img = loadImage(planting_b_left_url)
+	walking_with_seeds_a_right_img = loadImage(walking_with_seeds_a_right_url)
+	let plantingActionImgsDict = {}
+	plantingActionImgsDict['left'] = [planting_a_left_img,planting_b_left_img]
+	plantingActionImgsDict['right'] = [planting_a_right_img,planting_b_right_img]
+	plantingActionImgs = new ActionImages('planting', plantingActionImgsDict)
+
+	walking_with_water_bucket_a_left_img = loadImage(walking_with_water_bucket_a_left_url)
+	walking_with_water_bucket_a_right_img = loadImage(walking_with_water_bucket_a_right_url)
+	walking_with_water_bucket_b_left_img = loadImage(walking_with_water_bucket_b_left_url)
+	walking_with_water_bucket_b_right_img = loadImage(walking_with_water_bucket_b_right_url)
+	watering_left_img = loadImage(watering_left_url)
+	watering_right_img = loadImage(watering_right_url)
+
+	walkingWithWaterBucketImgs['left'] = [walking_with_water_bucket_a_left_img,walking_with_water_bucket_b_left_img]
+	walkingWithWaterBucketImgs['right'] = [walking_with_water_bucket_a_right_img,walking_with_water_bucket_b_right_img]
+	walkingWithWaterBucketActionImgs = new ActionImages('walkingWithBucket', walkingWithWaterBucketImgs)
+
+
+	wateringImgs['left'] = [watering_left_img]
+	wateringImgs['right'] = [watering_right_img]
+	wateringActionImgs = new ActionImages('watering', wateringImgs)
 }
 	
 function setup() {
@@ -337,6 +866,20 @@ function setup() {
 	}
 	treeY = canvasHeight - blockWidth - (treeHeightBlocks * blockWidth)
 
+	// check if each block is farmable...
+	for(const block of blocks){
+		// check if block intersects with house, tree, or well
+		// block x w/ house
+		if(intersects(block.x, block.x + block.width, houseX, houseX + (houseWidthBlocks*blockWidth)))
+			block.isFarmable = false
+		else if(intersects(block.x, block.x + block.width, wellX, wellX + (wellWidthBlocks*blockWidth)))
+			block.isFarmable = false
+		else if(intersects(block.x, block.x + block.width, treeX, treeX + (treeWidthBlocks*blockWidth)))
+			block.isFarmable = false
+		else
+			block.isFarmable = true
+	}
+
 	// setup sun
 	sunColor = color(255, 213, 0)
 	sunFunctionCoef = Math.pow(windowWidth/2, 2) / canvasHeight
@@ -356,11 +899,12 @@ function setup() {
 	let cloudsToGenerate = (Math.random() * maxClouds) + 2
 	for(let i = 0; i < cloudsToGenerate; i++){
 		let cloudX = Math.random() * windowWidth
-		let cloudY = (Math.random() * (1*(canvasHeight/2))) + atmosphereHeight
+		let cloudY = Math.random() * (2*(canvasHeight/3))
+		// let cloudY = (Math.random() * (1*(canvasHeight/2))) + atmosphereHeight
 		let cloudWidth = maxCloudWidth * Math.random()
 		let cloudHeight = Math.random() * cloudWidth
 		let cloudVX = (Math.random() * maxCloudSpeed) + minCloudSpeed
-		let cloudColor = 255 - (Math.random() * cloudColorMod)
+		let cloudColor = 255 - (Math.random() * Math.random() * cloudColorMod)
 		clouds.push( new Cloud(cloudX, cloudY, cloudVX, cloudWidth, cloudHeight, cloudColor, false))
 	}
 
@@ -403,7 +947,7 @@ function setup() {
 	let farmerVX = 0
 	let farmerAction = lookForTaskAction
 	let farmerHeight = farmerHeightBlocks * blockWidth
-	let farmerWidth = farmerHeight/2
+	let farmerWidth = farmerHeight
 	farmer = new Farmer(farmerX, farmerY, farmerVX, farmerWidth, farmerHeight, 'left', false, lookForTaskAction, 0, 'Bob Tod')
 
 }
@@ -422,6 +966,23 @@ function draw() {
 	// dirt
 	for(const block of blocks){
 		image(block.img, block.x, block.y, block.width, block.height)
+
+		// draw plants
+		if(block.hasPlant){
+			if(block.plant.hydration > 0.5){
+				image(plantImgs[block.plant.direction][block.plant.stage], block.x + (blockWidth/2) - (block.plant.width/2), block.y - block.plant.height, block.plant.width, block.plant.height)
+			}else{
+				image(plantDehydratedImgs[block.plant.direction][block.plant.stage], block.x + (blockWidth/2) - (block.plant.width/2), block.y - block.plant.height, block.plant.width, block.plant.height)
+			}
+			// grow plant? 
+			if( isDay && block.plant.stage < Plant.maxStage && block.plant.hydration >= Plant.minHydrationToGrow && (Math.random() > 1-Plant.growthRate)){
+				block.plant.grow()
+			}
+			//dehydrate plants
+			if(block.plant.hydration > 0 && Math.random() > 1-Plant.dehydrationRate){
+				block.plant.hydration -= Plant.dehydrationStep
+			}
+		}
 	}
 
 	// house
@@ -432,6 +993,9 @@ function draw() {
 
 	// tree
 	image(treeImg, treeX, treeY, treeWidthBlocks * blockWidth, treeHeightBlocks * blockWidth)
+
+	// bucket drops
+	drawBucketDrops()
 
 	//farmer
 	if(farmer.isVisible)
@@ -467,6 +1031,35 @@ function drawAtmosphere() {
 		strokeWeight(1)
 		rect(0, atmosphereHeight - line.y, windowWidth, atmosphereHeight - line.y)
 	}
+	stroke(255)
+	fill(255)
+	strokeWeight(1)
+	rect(0, 0, windowWidth, 0)
+}
+
+function drawBucketDrops() {
+	let dropsCopy = []
+	for(const drop of bucketDrops){
+		fill(rainColor)
+		stroke(rainColor)
+		strokeWeight(2)
+		point(drop.x, drop.y)
+		drop.x += drop.vx
+		drop.y += drop.vy
+		drop.vx *= airResistance
+		if(drop.vy > 0)
+			drop.vy += drop.vy * gravityVY
+		else
+			drop.vy += (-1 * drop.vy * gravityVY) + (3*gravityVY)
+		if(drop.y < (canvasHeight - blockWidth)){
+			dropsCopy.push(drop)
+		}else if ( Math.random() > 0.5 ) {
+			drop.vy = -1
+			drop.y = canvasHeight - blockWidth
+			dropsCopy.push(drop)
+		}
+	}
+	bucketDrops = dropsCopy
 }
 
 function drawRain(cloud) {
@@ -474,14 +1067,27 @@ function drawRain(cloud) {
 	for(const drop of cloud.rain){
 		fill(rainColor)
 		stroke(rainColor)
-		strokeWeight(3)
+		strokeWeight(2)
 		point(drop.x, drop.y)
 		drop.x += drop.vx
 		drop.y += drop.vy
 		drop.vx *= airResistance
-		drop.vy *= gravityVY
+		if(drop.vy > 0)
+			drop.vy += drop.vy * gravityVY
+		else
+			drop.vy += (-1 * drop.vy * gravityVY) + (3*gravityVY)
 		if(drop.y < (canvasHeight - blockWidth)){
 			rainCopy.push(drop)
+		}else if ( Math.random() > 0.5 ) {
+			drop.vy = -1
+			drop.y = canvasHeight - blockWidth
+			rainCopy.push(drop)
+		}else{
+			// absorb into ground... hydrate plant
+			let blockToHydrate = getBlockByX(drop.x)
+			if(blockToHydrate.hasPlant && blockToHydrate.plant.hydration < 1){
+				blockToHydrate.plant.hydration += Rain.dropHydration
+			}
 		}
 	}
 	cloud.rain = rainCopy
@@ -598,7 +1204,7 @@ function drawSunMoon() {
 		document.getElementById('overlay').style.filter = 'brightness('+ brightness +')'
 
 		// sky darkness
-		let darnkness = 0.5 - map(sunY, 0, canvasHeight, 0, 0.5)
+		let darnkness = 1 - map(sunY, 0, canvasHeight, 0, 1)
 		skyColor = color(59-(darnkness*59), 163-(darnkness*163), 255-(darnkness * 255))
 
 		drawAtmosphere()
@@ -637,9 +1243,19 @@ function randNeg(){
 		return -1
 }
 
+function intersects(a1, a2, b1, b2){
+	if(a1 >= b1 && a1 <= b2)
+		return true
+	if(a2 <= b2 && a2 >= b1)
+		return true
+	return false
+}
+
 function changeTimeSpeed(timeSpeedInput){
 	timeAdvance = parseFloat(timeSpeedInput.value)
 }
+
+
 
 </script>
 <style>

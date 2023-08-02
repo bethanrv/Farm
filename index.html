@@ -49,7 +49,7 @@ let rainCloudDarkness = 255-(3*cloudColorMod/4)
 let atmosphereLines = []
 
 let stars = []
-let maxStars = 50
+let maxStars = Math.floor(windowWidth/5)
 let starBrightnessMod = 100
 
 let rain = []
@@ -85,7 +85,7 @@ class Cloud {
 }
 
 class Rain {
-	static dropHydration = 0.005
+	static dropHydration = 0.01
 	constructor( x, y, vx, vy){
 		this.x = x
 		this.y = y
@@ -110,11 +110,11 @@ class AtmosphereLine {
 
 class Plant {
 	static minHydrationToGrow = 0.5
-	static growthRate = 1/9600
+	static growthRate = 1/4800
 	static maxStage = 4
 	static heightStep = blockWidth/4
 	static startingHeight = 3*(blockWidth/4)
-	static dehydrationRate = 1/400
+	static dehydrationRate = 1/600
 	static dehydrationStep = 0.1
 	constructor( direction ){
 		this.width = Plant.startingHeight
@@ -1118,10 +1118,9 @@ function drawClouds(){
 				let rainVY = rainInitVY
 				cloud.rain.push(new Rain(rainX, rainY, rainVX, rainVY))
 			}
-
-			//draw rain
-			drawRain(cloud)
 		}
+		//draw rain
+		drawRain(cloud)
 
 		fill(cloudColor)
 		stroke(cloudColor)

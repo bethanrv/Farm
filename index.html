@@ -7,20 +7,15 @@
 </head>
 <body>
 
-	<input onchange="changeTimeSpeed(this)" type="number" id="timeSpeedInput" name="">
+	<input style="display:none;" onchange="changeTimeSpeed(this)" type="number" id="timeSpeedInput" name="">
 
-	<div id="overlay"> </div>
+	<p style="display: flex; justify-content: center; margin-top: 10vh; font-size: 2em; text-decoration: underline; font-family: courier;"> Farm </p>
+
 
 </body>
 </html>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.7.0/p5.min.js" integrity="sha512-bcfltY+lNLlNxz38yBBm/HLaUB1gTV6I0e+fahbF9pS6roIdzUytozWdnFV8ZnM6cSAG5EbmO0ag0a/fLZSG4Q==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
 <script>
-
-/* to do
-	- remove overlay
-		- find working brightness solution
-		- apply filter to bounded area?
-*/
 
 let blocksAcross = 0
 let blockWidth = 25
@@ -40,8 +35,8 @@ let minCloudSpeed = 0.01
 let cloudRadius = 3
 let cloudSpawnThreshold = 0.999
 let cloudColorMod = 100
-let rainStartThreshold = 0.99
-let rainEndThreshold = 0.99
+let rainStartThreshold = 0.999
+let rainEndThreshold = 0.9
 let maxRainDropped = 2
 let gravityVY = 0.05
 let airResistance = 0.95
@@ -101,6 +96,7 @@ class Star {
 		this.color = color
 	}
 }
+
 
 class AtmosphereLine {
 	constructor(y, color){
@@ -974,12 +970,6 @@ function setup() {
 	createCanvas(windowWidth, canvasHeight);
 	document.getElementById('defaultCanvas0').style.position = 'fixed'
 	document.getElementById('defaultCanvas0').style.bottom = 0
-	let overlay = document.getElementById('overlay')
-	overlay.style.zIndex = '2';
-	overlay.style.position = 'fixed'
-	overlay.style.bottom = '0'
-	overlay.style.height = canvasHeight - atmosphereHeight + 'px'
-	overlay.style.width = '100vw'
 
 	// setup dirt
 	blocksAcross = windowWidth/blockWidth
@@ -1262,10 +1252,9 @@ function drawClouds(){
 				let rainVY = rainInitVY
 				cloud.rain.push(new Rain(rainX, rainY, rainVX, rainVY))
 			}
-
-			//draw rain
-			drawRain(cloud)
 		}
+		//draw rain
+		drawRain(cloud)
 
 		fill(cloudColor)
 		stroke(cloudColor)
@@ -1301,31 +1290,6 @@ function drawSunMoon() {
 
 	if(isDay){
 
-		document.getElementById('overlay').style.filter = 'brightness(1)'
-		
-		// sun rays
-		// let rayCount = Math.floor(Math.random()*12)
-		// for(let i = 0; i < rayCount; i++){
-			
-		// 	// ray color
-		// 	let rayColorRed = 255
-		// 	let rayColorGreen = 255 - Math.floor((Math.random() * 140))
-		// 	let rayColorBlue = 0
-		// 	let rayColor = color(rayColorRed, rayColorGreen, rayColorBlue)
-
-		// 	// ray length
-		// 	let rayLength = Math.floor(Math.random() * sunWidth * 0.5) * randNeg()
-		// 	let rayWidth = Math.floor(Math.random() * 5)
-		// 	let rayUp = Math.floor(Math.random() * sunWidth * 0.5) * randNeg()
-
-		// 	fill(rayColor)
-		// 	stroke(rayColor)
-		// 	strokeWeight(rayWidth)
-		// 	line(sunX, sunY + (sunWidth/2), sunX + rayLength, sunY + (sunWidth/2) + rayUp)
-		// }
-
-		
-
 		// sky brightness
 		let brightness = 0.5 - map(sunY, 0, canvasHeight, 0, 0.5)
 		skyColor = color(59 + (brightness*(255-59)), 163 + (brightness*(255-163)), 255)
@@ -1343,9 +1307,6 @@ function drawSunMoon() {
 		
 
 		let brightness = map(sunY, 0, canvasHeight, 0.5, 1)
-
-		// darkness
-		document.getElementById('overlay').style.filter = 'brightness('+ brightness +')'
 
 		// sky darkness
 		let darnkness = 1 - map(sunY, 0, canvasHeight, 0, 1)

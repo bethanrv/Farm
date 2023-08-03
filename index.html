@@ -30,7 +30,7 @@ let atmosphereHeight = 200
 let time = 0
 let maxTime = 24
 let timeStepWidth
-let timeAdvance = maxTime / (60*60*4) 
+let timeAdvance = maxTime / (60*60*3) 
 let isDay = true
 let clouds = []
 let maxClouds = 12
@@ -49,7 +49,7 @@ let rainCloudDarkness = 255-(3*cloudColorMod/4)
 let atmosphereLines = []
 
 let stars = []
-let maxStars = Math.floor(windowWidth/5)
+let maxStars = 50
 let starBrightnessMod = 100
 
 let rain = []
@@ -85,7 +85,7 @@ class Cloud {
 }
 
 class Rain {
-	static dropHydration = 0.01
+	static dropHydration = 0.05
 	constructor( x, y, vx, vy){
 		this.x = x
 		this.y = y
@@ -110,11 +110,11 @@ class AtmosphereLine {
 
 class Plant {
 	static minHydrationToGrow = 0.5
-	static growthRate = 1/4800
+	static growthRate = 1/9600
 	static maxStage = 4
 	static heightStep = blockWidth/4
 	static startingHeight = 3*(blockWidth/4)
-	static dehydrationRate = 1/600
+	static dehydrationRate = 1/800
 	static dehydrationStep = 0.1
 	constructor( direction ){
 		this.width = Plant.startingHeight
@@ -167,14 +167,21 @@ class Farmer {
   		this.walkWithBucket()
   	else if(this.action.name == 'watering')
   		this.water()
+  	else if(this.action.name == 'walkingWithHarvest')
+  		this.walkWithHarvest()
+  	else if(this.action.name == 'harvesting')
+  		this.harvest()
   }
   lookForTaskAction(){
   	if(isDay && this.action.phase == 0){ // search for available tasks
   		if(hasPlantableBlock() && Math.random() >= 0.9){ // go plant at given block
   			this.action = new Action('walkingWithSeeds', walkingWithSeedsActionImgs)
   		}
-  		else if(plantNeedsWatering() && Math.random() >= 0.8){
+  		else if(plantNeedsWatering() && Math.random() >= 0.75){
   			this.action = new Action('walkingWithBucket', walkingWithWaterBucketActionImgs)
+  		}
+  		else if(plantHarvestable() && Math.random() >= 0.6){
+  			this.action = new Action('walkingWithHarvest', walkingWithHarvestingBagActionImgs)
   		}
   		else if(Math.random() >= 0.9){
   			this.action = new Action('walking', walkingActionImgs) // walk somewhere
@@ -467,6 +474,93 @@ class Farmer {
   		this.action.phase = 3
   	}
   }// end watering
+
+  walkWithHarvest(){
+  	if(this.action.phase == 0){
+	  	let blockWithPlantToHarvest = getPlantToHarvest()
+	  	this.isVisible = true
+  		this.targetX = blockWithPlantToHarvest.x + (blockWidth/2)
+  		if(this.x < this.targetX){
+  			this.direction = 'right'
+  			this.vx = walkingSpeed
+  		}else{
+  			this.direction = 'left'
+  			this.vx = -1 * walkingSpeed
+  		}
+  		this.action.phase = 1 // next phase
+	  }
+	  else if(this.action.phase == 1){
+	  	this.imagePhaser()
+  		let farmerMiddle = this.x + (this.width/2)
+  		if ( Math.abs(farmerMiddle - this.targetX) <= blockWidth/2 ){ // reached target? stop
+  			this.action.phase = 2
+  			this.pauseFrames = 30
+  			this.vx = 0
+  		}
+  		else{ // move to target
+  			this.x += this.vx
+  		}
+	  }
+	  else if(this.action.phase == 2){ // switch to harvest task
+	  	this.pauseFrames--
+  		if(this.pauseFrames == 0){
+  			this.action = new Action('harvesting', harvestingActionImgs)
+  			this.pauseFrames = 400
+  		}
+	  }
+	  else if(this.action.phase == 3) { // face home
+  		if(this.x < houseX){ // face house
+  			this.direction = 'right'
+  			this.vx = walkingSpeed
+  		}else{
+  			this.direction = 'left'
+  			this.vx = -1 * walkingSpeed
+  		}
+  		this.targetX = houseX + (houseWidthBlocks*blockWidth/2)
+  		this.action.phase = 4
+  	}
+  	else if(this.action.phase == 4){
+  		this.imagePhaser()
+  		let farmerMiddle = this.x + (this.width/2)
+  		if(Math.abs(farmerMiddle - this.targetX) < (this.width/2)){ // home?
+  			this.action.phase = 5
+  			this.pauseFrames = 60
+  			this.vx = 0
+  		}else{
+  			this.x += this.vx
+  		}
+  	} // end phase 4
+  	else if (this.action.phase == 5) { //enter home
+			this.pauseFrames--
+  		if(this.pauseFrames == 0){
+  			this.isVisible = false
+  			this.pauseFrames = 120
+  			this.action.phase = 6
+  		}
+  	}
+  	else if(this.action.phase == 6) { // cooldown
+  		this.pauseFrames--
+  		if(this.pauseFrames == 0){
+  			this.action = new Action('lookForTaskAction', walkingActionImgs)
+  		}
+  	}
+  }// end walk with harvest
+
+  harvest(){
+  	if(this.action.phase == 0){
+  		this.imagePhaser()
+  		this.pauseFrames--
+  		if(this.pauseFrames%(400/4) == 0){ // harvest plant
+  			let plantHarvesting = getBlockByX(this.targetX - (blockWidth/2)).plant
+  			plantHarvesting.stage--
+  			plantHarvesting.height -= Plant.heightStep
+  			if(plantHarvesting.stage == 0){
+  				this.action = new Action('walkingWithHarvest', walkingWithHarvestingBagActionImgs)
+  				this.action.phase = 3
+  			}
+  		}
+  	}
+  } // end harvest
 }
 
 function getBlockByX(x){
@@ -522,6 +616,24 @@ function plantNeedsWatering() {
 function getPlantBlockToWater() {
 	for(const block of blocks){
 		if(block.hasPlant && block.plant.hydration < Plant.minHydrationToGrow){
+			return block
+		}
+	}
+	return -1
+}
+
+function plantHarvestable() {
+	for(const block of blocks){
+		if(block.hasPlant && block.plant.stage == Plant.maxStage){
+			return true
+		}
+	}
+	return false
+}
+
+function getPlantToHarvest() {
+	for(const block of blocks){
+		if(block.hasPlant && block.plant.stage == Plant.maxStage){
 			return block
 		}
 	}
@@ -704,15 +816,33 @@ let watering_right_url = 'https://i.ibb.co/Ky7txGJ/bending-watering-can-a-right.
 let watering_right_img
 
 
+let walkingWithHarvestingBagImgs = {}
+let walking_with_harvesting_bag_a_left_url = 'https://i.ibb.co/FB26Qr6/walking-harvesting-bag-c-left.png'
+let walking_with_harvesting_bag_a_left_img
 
+let walking_with_harvesting_bag_b_left_url = 'https://i.ibb.co/Hh1ZP7b/walking-harvesting-bag-a-left.png'
+let walking_with_harvesting_bag_b_left_img
 
+let walking_with_harvesting_bag_a_right_url = 'https://i.ibb.co/YkQjQYJ/walking-harvesting-bag-c-right.png'
+let walking_with_harvesting_bag_a_right_img
 
+let walking_with_harvesting_bag_b_right_url = 'https://i.ibb.co/tKr7sZF/walking-harvesting-bag-a-right.png'
+let walking_with_harvesting_bag_b_right_img
+
+let harvestingImgs = {}
+let harvesting_a_left_url = 'https://i.ibb.co/Hg0DZd4/bending-harvesting-bag-a-left.png'
+let harvesting_a_left_img
+
+let harvesting_a_right_url = 'https://i.ibb.co/mF8WKMy/bending-harvesting-bag-a-right.png'
+let harvesting_a_right_img
 
 
 let plantingActionImgs // planting
 let walkingWithSeedsActionImgs // walkingWithSeeds
 let walkingActionImgs // walking
 let walkingWithWaterBucketActionImgs // walkingWithBucket
+let walkingWithHarvestingBagActionImgs // walkingWithHarvest
+let harvestingActionImgs // harvesting
 
 function randomDirt(){
 	return dirtBlockImgs[Math.floor(Math.random() * dirtBlockImgs.length)]
@@ -819,10 +949,24 @@ function preload() {
 	walkingWithWaterBucketImgs['right'] = [walking_with_water_bucket_a_right_img,walking_with_water_bucket_b_right_img]
 	walkingWithWaterBucketActionImgs = new ActionImages('walkingWithBucket', walkingWithWaterBucketImgs)
 
-
 	wateringImgs['left'] = [watering_left_img]
 	wateringImgs['right'] = [watering_right_img]
 	wateringActionImgs = new ActionImages('watering', wateringImgs)
+
+	walking_with_harvesting_bag_a_left_img = loadImage(walking_with_harvesting_bag_a_left_url)
+	walking_with_harvesting_bag_b_left_img = loadImage(walking_with_harvesting_bag_b_left_url)
+	walking_with_harvesting_bag_a_right_img = loadImage(walking_with_harvesting_bag_a_right_url)
+	walking_with_harvesting_bag_b_right_img = loadImage(walking_with_harvesting_bag_b_right_url)
+	walkingWithHarvestingBagImgs['left'] = [walking_with_harvesting_bag_a_left_img, walking_with_harvesting_bag_b_left_img]
+	walkingWithHarvestingBagImgs['right'] = [walking_with_harvesting_bag_a_right_img, walking_with_harvesting_bag_b_right_img]
+	walkingWithHarvestingBagActionImgs = new ActionImages('walkingWithHarvest', walkingWithHarvestingBagImgs)
+
+	harvesting_a_left_img = loadImage(harvesting_a_left_url)
+	harvesting_a_right_img = loadImage(harvesting_a_right_url)
+	harvestingImgs['left'] = [harvesting_a_left_img, walking_with_harvesting_bag_b_left_img]
+	harvestingImgs['right'] = [harvesting_a_right_img, walking_with_harvesting_bag_b_right_img]
+	harvestingActionImgs = new ActionImages('harvesting', harvestingImgs)
+
 }
 	
 function setup() {
@@ -1118,9 +1262,10 @@ function drawClouds(){
 				let rainVY = rainInitVY
 				cloud.rain.push(new Rain(rainX, rainY, rainVX, rainVY))
 			}
+
+			//draw rain
+			drawRain(cloud)
 		}
-		//draw rain
-		drawRain(cloud)
 
 		fill(cloudColor)
 		stroke(cloudColor)
